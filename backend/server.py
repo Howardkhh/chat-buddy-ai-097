@@ -3,12 +3,15 @@ from flask_cors import CORS
 from app.routes import bp as api_bp
 import requests
 import os, json, uuid
+import openai
+import base64
+from datetime import datetime
 
 from character import CharacterManager
 
 app = Flask(__name__, static_folder=None)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
-app.register_blueprint(api_bp, url_prefix="/api")
+# app.register_blueprint(api_bp, url_prefix="/api")
 
 QWEN_API = "http://20.66.111.167:31022/v1/chat/completions"
 
@@ -51,7 +54,64 @@ def proxy_chat():
 
     return jsonify({"content": content, "raw": data})
 
+BOSON_API_KEY = "fdjshifohudsoiaf"
+client = openai.Client(
+    api_key=BOSON_API_KEY,
+    base_url="http://37.120.212.230:55843/v1"
+)
 
+def getResponse(audio) -> str:
+    audio_base64 = base64.b64encode(audio).decode("utf-8")
+
+    response = client.chat.completions.create(
+        model="higgs-audio-understanding-7b-v1.0",
+        messages=[
+            # The model can also act as a general purpose chat model.
+            # It can understand user's questions and directly generate text responses.
+            {"role": "system",   "content": "You are a helpful assistant for audio understanding. Always output exactly ONE string with this format: <user>caption</user><response></response>. Rules: (1) The caption is a faithful transcription of the user's audio, in their language. (2) Immediately after the caption, output the literal token </user>. (3) Immediately after </user><response>, output your response. (4) There must be exactly one <user>, </user>, <response>, and </response>. (5) Do not wrap in quotes, code blocks, or add newlines. (6) If audio is unintelligible, caption as [inaudible]. (7) If no speech, caption as [no speech]. Examples: Input: Hi, how was your day? → Output: <user>Hi, how was your day?</user><response>Hello! I'm great—how about you?</response> Input: ¿Puedes poner un recordatorio para mañana? → Output: <user>¿Puedes poner un recordatorio para mañana?</user><response>¡Claro! ¿A qué hora te gustaría el recordatorio?</resonse> Input: [garbled audio] → Output: <user>[inaudible]</user><response>Sorry, I couldn’t catch that. Could you repeat more clearly?</response>"},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_base64,
+                            "format": "wav",
+                        },
+                    },
+                ],
+            },
+        ],
+        max_completion_tokens=256,
+        temperature=0.0,
+    )
+
+    return response.choices
+
+@app.route("/api/turn", methods=["POST"])
+def api_turn():
+    if "audio" not in request.files:
+        return jsonify({"error": "no 'audio' file in form-data"}), 400
+    f = request.files["audio"]
+    audio_bytes = f.read()
+    try:
+        replies = getResponse(audio_bytes)
+        for reply in replies:
+            reply = reply.message.content
+            if "</user><response>" in reply:
+                reply = reply.split("</user><response>")
+                user_caption = reply[0].strip().replace("<user>", "")
+                bot_reply = reply[1].strip().replace("</response>", "")
+            else:
+                print(f"Bad reply: {reply}")
+                continue
+
+            print(f"User: {user_caption}")
+            print(f"Bot: {bot_reply}")
+            return jsonify({"user": user_caption, "bot": bot_reply, "ts": datetime.utcnow().isoformat() + "Z"})
+        return jsonify({"user": "[inaudible]", "bot": "Sorry, I couldn’t catch that. Could you repeat more clearly?", "ts": datetime.utcnow().isoformat() + "Z"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # 初始化角色管理器
 character_manager = CharacterManager()

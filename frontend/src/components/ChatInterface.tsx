@@ -149,7 +149,8 @@ const ChatInterface = () => {
   const [newTrait, setNewTrait] = useState("");
 
   const [isVoicePanelOpen, setIsVoicePanelOpen] = useState(false)
-  const [captions, setCaptions] = useState<VCaption[]>([])
+  const [captionsByChar, setCaptionsByChar] = useState<Record<string, VCaption[]>>({})
+  const currentCaptions: VCaption[] = captionsByChar[activeCharacter] ?? []
   const headerRef = useRef<HTMLDivElement | null>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
 
@@ -180,13 +181,48 @@ const ChatInterface = () => {
     return () => ro.disconnect();
   }, []);
 
-  const addCaption = (speaker: "user" | "ai", text: string) => {
-    setCaptions(prev => [
+  const addCaption = (
+    speaker: "user" | "ai",
+    text: string,
+    characterId = activeCharacter
+  ) => {
+    if (!characterId) return null
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    setCaptionsByChar((prev) => ({
       ...prev,
-      { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, speaker, text, time: new Date() },
-    ])
+      [characterId]: [
+        ...(prev[characterId] ?? []),
+        { id, speaker, text, time: new Date() },
+      ],
+    }))
+    return id
   }
-  const clearCaptions = () => setCaptions([])
+  const updateCaption = (
+    id: string,
+    patch: Partial<VCaption>,
+    characterId = activeCharacter
+  ) => {
+    if (!characterId || !id) return
+    setCaptionsByChar((prev) => ({
+      ...prev,
+      [characterId]: (prev[characterId] ?? []).map((c) =>
+        c.id === id ? { ...c, ...patch } : c
+      ),
+    }))
+  }
+
+  const removeCaption = (id: string, characterId = activeCharacter) => {
+    if (!characterId || !id) return
+    setCaptionsByChar((prev) => ({
+      ...prev,
+      [characterId]: (prev[characterId] ?? []).filter((c) => c.id !== id),
+    }))
+  }
+
+  const clearCaptions = (characterId = activeCharacter) => {
+    if (!characterId) return
+    setCaptionsByChar((prev) => ({ ...prev, [characterId]: [] }))
+  }
 
 
   const currentThread = threads[activeCharacter] ?? [];
@@ -369,68 +405,30 @@ const ChatInterface = () => {
     enabled: isCallActive,
     muted: isMuted,
     onTurn: async (wav) => {
-      // Show a note in captions
-      addCaption("user", "(voice) — sending audio…");
+      // Add a temporary placeholder and keep its id
+      const tempId = addCaption("user", "(voice) — sending audio…")
 
-      const form = new FormData();
-      form.append("audio", wav, "turn.wav");
+      const form = new FormData()
+      form.append("audio", wav, "turn.wav")
 
       try {
-        const r = await fetch("http://localhost:8787/api/turn", { method: "POST", body: form });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error || r.statusText);
+        const r = await fetch("http://localhost:8000/api/turn", { method: "POST", body: form })
+        const data = await r.json()
+        if (!r.ok) throw new Error(data.error || r.statusText)
 
-        // data.text should be ASR result (or your model's reply); for now, we treat as "user said" then ask Qwen
-        const userSaid = data.text || "(no ASR)";
-        addCaption("user", userSaid);
+        const userSaid = data.user || "(Failed to recognize speech)"
+        // Replace the placeholder text with the recognized user speech
+        if (tempId) updateCaption(tempId, { text: userSaid })
 
-        // send to Qwen as chat message
-        const now = new Date();
-        const userMsg = {
-          id: `${now.getTime()}`,
-          content: userSaid,
-          sender: "user" as const,
-          timestamp: now,
-          characterId: activeCharacter,
-        };
-        setThreads((prev) => ({
-          ...prev,
-          [activeCharacter]: [...(prev[activeCharacter] ?? []), userMsg],
-        }));
-
-        // typing bubble
-        const typingId = `${Date.now()}-typing`;
-        setThreads((prev) => ({
-          ...prev,
-          [activeCharacter]: [
-            ...(prev[activeCharacter] ?? []),
-            { id: typingId, content: "", kind: "typing" as const, sender: "ai" as const, timestamp: new Date(), characterId: activeCharacter },
-          ],
-        }));
-
-        // model call
-        const characterName = characters.find((c) => c.id === activeCharacter)?.name;
-        const reply = await chatWithQwen({ 
-          prompt: userSaid, 
-          character: characterName, 
-          character_json: JSON.stringify(characters.find((c) => c.id === activeCharacter)), 
-        });
-
-        // replace typing
-        setThreads((prev) => {
-          const list = prev[activeCharacter] ?? [];
-          const withoutTyping = list.filter((m) => m.id !== typingId);
-          return {
-            ...prev,
-            [activeCharacter]: [
-              ...withoutTyping,
-              { id: `${Date.now() + 1}`, content: reply || "(no content)", sender: "ai", timestamp: new Date(), characterId: activeCharacter },
-            ],
-          };
-        });
-        addCaption("ai", reply || "(no content)");
+        const reply = data.bot
+        addCaption("ai", reply || "(no content)")
       } catch (err: any) {
-        addCaption("ai", `⚠️ Turn error: ${err?.message || err}`);
+        // Either change the temp line into an error...
+        if (tempId) {
+          updateCaption(tempId, { text: `⚠️ Turn error: ${err?.message || err}` })
+        } else {
+          addCaption("ai", `⚠️ Turn error: ${err?.message || err}`)
+        }
       }
     },
   });
@@ -787,12 +785,13 @@ const ChatInterface = () => {
         {/* Overlay lives here so it only covers the chat column */}
         <VoiceCaptionOverlay
           open={isVoicePanelOpen}
-          captions={captions}
+          captions={currentCaptions}
           onClear={clearCaptions}
           topOffset={headerHeight}
           meterLevel={voice.meterLevel}
           db={voice.db}
           thresholdDb={thresholdDb}
+          aiName={currentCharacter?.name}
         />
         {/* Chat Header */}
         <div ref={headerRef} className="h-20 bg-card border-b border-border flex items-center justify-between px-6 shadow-soft">
