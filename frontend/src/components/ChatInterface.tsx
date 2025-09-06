@@ -289,6 +289,7 @@ const ChatInterface = () => {
       const reply = await chatWithQwen({
         prompt: userMsg.content,
         character: characterName,
+        character_json: JSON.stringify(characters.find((c) => c.id === activeCharacter)),
         signal: abortRef.current.signal,
       });
 
@@ -409,7 +410,11 @@ const ChatInterface = () => {
 
         // model call
         const characterName = characters.find((c) => c.id === activeCharacter)?.name;
-        const reply = await chatWithQwen({ prompt: userSaid, character: characterName });
+        const reply = await chatWithQwen({ 
+          prompt: userSaid, 
+          character: characterName, 
+          character_json: JSON.stringify(characters.find((c) => c.id === activeCharacter)), 
+        });
 
         // replace typing
         setThreads((prev) => {
