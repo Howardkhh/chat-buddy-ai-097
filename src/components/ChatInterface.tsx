@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { Send, Plus, MoreVertical, Phone, PhoneOff, Mic, MicOff, Heart, Star, Sparkles, Settings, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { chatWithQwen } from "@/lib/api";
+import { TypingBubble } from "@/components/TypingBubble";
+import VoiceCaptionOverlay, { Caption as VCaption } from "@/components/VoiceCaptionOverlay"
+import { useVoiceTurn } from "@/hooks/useVoiceTurn";
+import { loadVoiceSettings } from "@/lib/voiceSettings";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface Message {
@@ -18,7 +24,8 @@ interface Message {
   content: string;
   sender: "user" | "ai";
   timestamp: Date;
-  character?: string;
+  characterId: string;
+  kind?: "text" | "typing";
 }
 
 interface Character {
@@ -107,7 +114,20 @@ class CharacterAPI {
 }
 
 const ChatInterface = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [threads, setThreads] = useState<Record<string, Message[]>>({
+    "1": [
+      {
+        id: "1",
+        content:
+          "Kyaa~! Hello there! I'm Luna-chan, your kawaii AI assistant! (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧ How can I help you today? ✨",
+        sender: "ai",
+        timestamp: new Date(),
+        characterId: "1",
+      },
+    ],
+  });
+
+  
   const [inputValue, setInputValue] = useState("");
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeCharacter, setActiveCharacter] = useState<string>("");
@@ -127,23 +147,54 @@ const ChatInterface = () => {
     backstory: ""
   });
   const [newTrait, setNewTrait] = useState("");
+
+  const [isVoicePanelOpen, setIsVoicePanelOpen] = useState(false)
+  const [captions, setCaptions] = useState<VCaption[]>([])
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+
+  const [thresholdDb, setThresholdDb] = useState(loadVoiceSettings().thresholdDb);
+
+  
+  // refresh when settings page saves
+  useEffect(() => {
+    const onUpd = () => setThresholdDb(loadVoiceSettings().thresholdDb);
+    window.addEventListener("voice-settings-updated", onUpd);
+    return () => window.removeEventListener("voice-settings-updated", onUpd);
+  }, []);
+
+  // keep header measured (responsive-safe)
+  useEffect(() => {
+    if (!headerRef.current) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setHeaderHeight(entry.contentRect.height);
+      }
+    });
+    ro.observe(headerRef.current);
+    // initial measure
+    setHeaderHeight(headerRef.current.getBoundingClientRect().height);
+    return () => ro.disconnect();
+  }, []);
+
+  const addCaption = (speaker: "user" | "ai", text: string) => {
+    setCaptions(prev => [
+      ...prev,
+      { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, speaker, text, time: new Date() },
+    ])
+  }
+  const clearCaptions = () => setCaptions([])
+
+
+  const currentThread = threads[activeCharacter] ?? [];
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const callTimer = useRef<NodeJS.Timeout>();
 
-  // 初始化加載角色
   useEffect(() => {
-    loadCharacters();
-  }, []);
-
-  // 滾動到底部
-  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  }, [currentThread]);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
 
   // 通話計時器
   useEffect(() => {
@@ -165,22 +216,7 @@ const ChatInterface = () => {
     };
   }, [isCallActive]);
 
-  // 設置歡迎消息
-  useEffect(() => {
-    if (characters.length > 0 && activeCharacter && messages.length === 0) {
-      const character = characters.find(char => char.id === activeCharacter);
-      if (character) {
-        const welcomeMessage: Message = {
-          id: "welcome",
-          content: `Kyaa~! Hello there! I'm ${character.name}, your kawaii AI companion! (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧ How can I help you today? ✨`,
-          sender: "ai",
-          timestamp: new Date(),
-          character: character.name
-        };
-        setMessages([welcomeMessage]);
-      }
-    }
-  }, [activeCharacter, characters]);
+
 
   // 加載角色
   const loadCharacters = async () => {
@@ -199,40 +235,102 @@ const ChatInterface = () => {
     }
   };
 
+  const abortRef = useRef<AbortController | null>(null);
+
   // 發送消息
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
+    const now = new Date();
+    const userMsg: Message = {
+      id: `${now.getTime()}`,
       content: inputValue,
       sender: "user",
-      timestamp: new Date()
+      timestamp: now,
+      characterId: activeCharacter, // ensure you have threads per character
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    // 1) append user message
+    setThreads((prev) => ({
+      ...prev,
+      [activeCharacter]: [...(prev[activeCharacter] ?? []), userMsg],
+    }));
+    addCaption("user", userMsg.content);
+
+    // optional: show a typing placeholder bubble
+    const typingId = `${now.getTime()}-typing`;
+    setThreads((prev) => ({
+      ...prev,
+      [activeCharacter]: [
+        ...(prev[activeCharacter] ?? []),
+        {
+          id: typingId,
+          content: "",                // not used for typing
+          kind: "typing",             // <-- key change
+          sender: "ai",
+          timestamp: new Date(),
+          characterId: activeCharacter,
+        },
+      ],
+    }));
+
+    // clear input
     setInputValue("");
 
-    // 模擬AI回應
-    setTimeout(() => {
-      const character = characters.find(char => char.id === activeCharacter);
-      const responses = [
-        "Ohh~ that's so interesting! (｡♥‿♥｡) Tell me more! ✨",
-        "Kyaa! I understand now! (◕‿◕)♡ Let me help you with that! 🌟",
-        "Sugoi! That's amazing! ✧(◕‿◕)✧ What would you like to do next? 💖",
-        "Hai hai~ I see! (´｡• ᵕ •｡`) ♡ Here's what I think... ✨",
-        "Ehehe~ you're so fun to talk with! (＾◡＾) Let's continue! 🌸"
-      ];
-      
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: responses[Math.floor(Math.random() * responses.length)],
-        sender: "ai",
-        timestamp: new Date(),
-        character: character?.name
-      };
-      setMessages(prev => [...prev, aiMessage]);
-    }, 1000);
+    // 2) call backend
+    try {
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+
+      const characterName = characters.find((c) => c.id === activeCharacter)?.name;
+      const reply = await chatWithQwen({
+        prompt: userMsg.content,
+        character: characterName,
+        signal: abortRef.current.signal,
+      });
+
+      // 3) replace typing with real message
+      setThreads((prev) => {
+        const list = prev[activeCharacter] ?? [];
+        const withoutTyping = list.filter((m) => m.id !== typingId);
+        return {
+          ...prev,
+          [activeCharacter]: [
+            ...withoutTyping,
+            {
+              id: `${Date.now() + 1}`,
+              content: reply || "(no content)",
+              sender: "ai",
+              timestamp: new Date(),
+              characterId: activeCharacter,
+            },
+          ],
+        };
+      });
+      addCaption("ai", reply || "(no content)");
+    } catch (err: any) {
+      // show error inside the thread
+      setThreads((prev) => {
+        const list = prev[activeCharacter] ?? [];
+        const withoutTyping = list.filter((m) => m.id !== typingId);
+        return {
+          ...prev,
+          [activeCharacter]: [
+            ...withoutTyping,
+            {
+              id: `${Date.now() + 1}`,
+              content: `⚠️ Qwen error: ${err?.message || err}`,
+              sender: "ai",
+              timestamp: new Date(),
+              characterId: activeCharacter,
+            },
+          ],
+        };
+      });
+      addCaption("ai", `⚠️ Qwen error: ${err?.message || err}`);
+    } finally {
+      abortRef.current = null;
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -247,6 +345,8 @@ const ChatInterface = () => {
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
       setIsCallActive(true);
+      setIsVoicePanelOpen(true); // show overlay
+      addCaption("ai", `📞 Voice channel opened with ${currentCharacter?.name ?? "AI"}.`);
     } catch (error) {
       console.error("Microphone access denied:", error);
       setError("需要麥克風權限才能進行語音通話!");
@@ -256,7 +356,77 @@ const ChatInterface = () => {
   const endCall = () => {
     setIsCallActive(false);
     setIsMuted(false);
+    addCaption("ai", "📴 Call ended.");
+    setIsVoicePanelOpen(false); // hide overlay
   };
+
+  // 🔊 Hook: when call is active, capture turns
+  const voice = useVoiceTurn({
+    enabled: isCallActive,
+    muted: isMuted,
+    onTurn: async (wav) => {
+      // Show a note in captions
+      addCaption("user", "(voice) — sending audio…");
+
+      const form = new FormData();
+      form.append("audio", wav, "turn.wav");
+
+      try {
+        const r = await fetch("http://localhost:8787/api/turn", { method: "POST", body: form });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || r.statusText);
+
+        // data.text should be ASR result (or your model's reply); for now, we treat as "user said" then ask Qwen
+        const userSaid = data.text || "(no ASR)";
+        addCaption("user", userSaid);
+
+        // send to Qwen as chat message
+        const now = new Date();
+        const userMsg = {
+          id: `${now.getTime()}`,
+          content: userSaid,
+          sender: "user" as const,
+          timestamp: now,
+          characterId: activeCharacter,
+        };
+        setThreads((prev) => ({
+          ...prev,
+          [activeCharacter]: [...(prev[activeCharacter] ?? []), userMsg],
+        }));
+
+        // typing bubble
+        const typingId = `${Date.now()}-typing`;
+        setThreads((prev) => ({
+          ...prev,
+          [activeCharacter]: [
+            ...(prev[activeCharacter] ?? []),
+            { id: typingId, content: "", kind: "typing" as const, sender: "ai" as const, timestamp: new Date(), characterId: activeCharacter },
+          ],
+        }));
+
+        // model call
+        const characterName = characters.find((c) => c.id === activeCharacter)?.name;
+        const reply = await chatWithQwen({ prompt: userSaid, character: characterName });
+
+        // replace typing
+        setThreads((prev) => {
+          const list = prev[activeCharacter] ?? [];
+          const withoutTyping = list.filter((m) => m.id !== typingId);
+          return {
+            ...prev,
+            [activeCharacter]: [
+              ...withoutTyping,
+              { id: `${Date.now() + 1}`, content: reply || "(no content)", sender: "ai", timestamp: new Date(), characterId: activeCharacter },
+            ],
+          };
+        });
+        addCaption("ai", reply || "(no content)");
+      } catch (err: any) {
+        addCaption("ai", `⚠️ Turn error: ${err?.message || err}`);
+      }
+    },
+  });
+
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -274,7 +444,10 @@ const ChatInterface = () => {
     setIsLoading(true);
     setError("");
     
-    const characterData = {
+    const id = Date.now().toString();
+
+    const characterData: Character = {
+      id: id,
       name: newCharacter.name,
       personality: newCharacter.personality || "Friendly AI companion",
       description: newCharacter.description || "A lovely AI character",
@@ -602,9 +775,19 @@ const ChatInterface = () => {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col relative">
+        {/* Overlay lives here so it only covers the chat column */}
+        <VoiceCaptionOverlay
+          open={isVoicePanelOpen}
+          captions={captions}
+          onClear={clearCaptions}
+          topOffset={headerHeight}
+          meterLevel={voice.meterLevel}
+          db={voice.db}
+          thresholdDb={thresholdDb}
+        />
         {/* Chat Header */}
-        <div className="h-20 bg-card border-b border-border flex items-center justify-between px-6 shadow-soft">
+        <div ref={headerRef} className="h-20 bg-card border-b border-border flex items-center justify-between px-6 shadow-soft">
           <div className="flex items-center gap-4">
             <Avatar className="w-12 h-12 ring-2 ring-primary/20">
               <AvatarFallback className="text-2xl bg-gradient-primary">
@@ -653,8 +836,10 @@ const ChatInterface = () => {
                 Voice Chat
               </Button>
             )}
-            <Button variant="ghost" size="sm">
-              <MoreVertical className="w-4 h-4" />
+            <Button asChild variant="ghost" size="sm" title="Voice Settings">
+              <Link to="/settings/voice" aria-label="Voice Settings">
+                <Settings className="w-4 h-4" />
+              </Link>
             </Button>
           </div>
         </div>
@@ -662,7 +847,7 @@ const ChatInterface = () => {
         {/* Messages */}
         <ScrollArea className="flex-1 p-6 bg-gradient-secondary/30">
           <div className="space-y-4">
-            {messages.map((message) => (
+            {currentThread.map((message) => (
               <div
                 key={message.id}
                 className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}
@@ -674,11 +859,16 @@ const ChatInterface = () => {
                       : "bg-chat-bubble text-foreground border border-primary/10"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap font-medium">{message.content}</p>
-                  <p className="text-xs opacity-70 mt-2 flex items-center gap-1">
-                    {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    {message.sender === "ai" && <Heart className="w-3 h-3 fill-current" />}
-                  </p>
+                  {message.kind === "typing" ? (
+                    <TypingBubble />
+                  ) : (
+                    <>
+                      <p className="whitespace-pre-wrap font-medium">{message.content}</p>
+                      <p className="text-xs opacity-70 mt-2 flex items-center gap-1">
+                        {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
