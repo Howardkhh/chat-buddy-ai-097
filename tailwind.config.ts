@@ -18,6 +18,9 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				'sans': ['Nunito', 'sans-serif'],
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
@@ -69,14 +72,16 @@ export default {
 			},
 			backgroundImage: {
 				'gradient-primary': 'var(--gradient-primary)',
-				'gradient-secondary': 'var(--gradient-secondary)'
+				'gradient-secondary': 'var(--gradient-secondary)',
+				'gradient-cute': 'var(--gradient-cute)'
 			},
 			boxShadow: {
-				'glow': 'var(--shadow-glow)',
-				'subtle': 'var(--shadow-subtle)'
+				'cute': 'var(--shadow-cute)',
+				'soft': 'var(--shadow-soft)',
+				'glow': 'var(--shadow-glow)'
 			},
 			transitionTimingFunction: {
-				'smooth': 'var(--transition-smooth)'
+				'bounce': 'var(--transition-bounce)'
 			},
 			borderRadius: {
 				lg: 'var(--radius)',

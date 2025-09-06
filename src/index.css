@@ -8,48 +8,50 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
+    --background: 350 100% 97%;
+    --foreground: 340 15% 25%;
 
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
+    --card: 350 100% 99%;
+    --card-foreground: 340 15% 25%;
 
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 350 100% 99%;
+    --popover-foreground: 340 15% 25%;
 
-    --primary: 263 70% 50%;
-    --primary-foreground: 0 0% 98%;
+    --primary: 320 65% 70%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 300 20% 95%;
+    --secondary-foreground: 340 15% 25%;
 
-    --muted: 240 5.9% 10%;
-    --muted-foreground: 240 5% 64.9%;
+    --muted: 320 15% 92%;
+    --muted-foreground: 340 10% 55%;
 
-    --accent: 263 70% 50%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 280 60% 80%;
+    --accent-foreground: 340 15% 25%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 75% 70%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 263 70% 50%;
+    --border: 320 20% 88%;
+    --input: 320 20% 88%;
+    --ring: 320 65% 70%;
 
-    --radius: 0.75rem;
+    --radius: 1rem;
 
-    /* Custom design tokens */
-    --gradient-primary: linear-gradient(135deg, hsl(263 70% 50%), hsl(280 80% 60%));
-    --gradient-secondary: linear-gradient(135deg, hsl(240 10% 3.9%), hsl(240 5.9% 10%));
-    --chat-bubble: 240 5.9% 10%;
-    --chat-bubble-user: 263 70% 50%;
-    --sidebar-bg: 240 10% 3.9%;
-    --hover-accent: 240 3.7% 15.9%;
+    /* Cute anime design tokens */
+    --gradient-primary: linear-gradient(135deg, hsl(320 65% 70%), hsl(280 60% 80%));
+    --gradient-secondary: linear-gradient(135deg, hsl(350 100% 97%), hsl(300 20% 95%));
+    --gradient-cute: linear-gradient(45deg, hsl(320 65% 70%), hsl(280 60% 80%), hsl(240 50% 85%));
+    --chat-bubble: 300 20% 95%;
+    --chat-bubble-user: 320 65% 70%;
+    --sidebar-bg: 350 100% 99%;
+    --hover-accent: 320 30% 90%;
     
-    --shadow-glow: 0 0 40px hsl(263 70% 50% / 0.3);
-    --shadow-subtle: 0 4px 20px hsl(240 10% 3.9% / 0.4);
+    --shadow-cute: 0 8px 25px hsl(320 65% 70% / 0.15);
+    --shadow-soft: 0 4px 15px hsl(300 20% 95% / 0.8);
+    --shadow-glow: 0 0 20px hsl(320 65% 70% / 0.4);
     
-    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 
     --sidebar-background: 0 0% 98%;
 
