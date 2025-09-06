@@ -14,12 +14,22 @@ QWEN_API = "http://20.66.111.167:31022/v1/chat/completions"
 
 @app.route("/api/chat", methods=["POST"])
 def proxy_chat():
+    print(f"Received json: {request.json}")
     user_input = request.json.get("prompt", "")
-
+    character = request.json.get("character", "")
+    character_json = json.loads(request.json.get("character_json", "{}"))
+    max_tokens = request.json.get("max_tokens", 4096)
+    # print(f"Character selected: {character}")
+    print(f"Character JSON: {character_json}")
+    print(type(character_json))
     payload = {
         "model": "qwen3-30b-a3b-thinking-fp8",
-        "messages": [{"role": "user", "content": user_input}],
-        "max_tokens": 8192
+        "messages": [
+            {"role": "system", "content": f"You are now a human whose name is {character} with backgroud story that {character_json["backstory"]}. \
+            Your personality is {character_json["personality"]}. You possess the following traits: {character_json["traits"]}."},
+            {"role": "user", "content": user_input}
+        ],
+        "max_tokens": max_tokens,
     }
 
     # This is the Python equivalent of your curl
@@ -30,7 +40,7 @@ def proxy_chat():
         timeout=60
     )
     data = r.json()
-    print(data)
+    # print(data)
 
     # Extract the text like jq does
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
