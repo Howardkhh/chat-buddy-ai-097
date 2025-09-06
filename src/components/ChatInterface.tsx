@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Plus, MoreVertical, Phone, PhoneOff, Mic, MicOff, Heart, Star, Sparkles, Settings } from "lucide-react";
+import { Send, Plus, MoreVertical, Phone, PhoneOff, Mic, MicOff, Heart, Star, Sparkles, Settings, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface Message {
   id: string;
@@ -30,61 +31,92 @@ interface Character {
   traits: string[];
   backstory: string;
   lastMessage?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// API配置
+const API_BASE_URL = "http://localhost:8000/api";
+
+// API服務類
+class CharacterAPI {
+  static async fetchCharacters(): Promise<Character[]> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/characters`);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      return result.success ? result.data : [];
+    } catch (error) {
+      console.error("獲取角色失敗:", error);
+      return [];
+    }
+  }
+
+  static async createCharacter(characterData: Omit<Character, 'id' | 'created_at' | 'updated_at'>): Promise<Character | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/characters`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(characterData),
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      return result.success ? result.data : null;
+    } catch (error) {
+      console.error("創建角色失敗:", error);
+      return null;
+    }
+  }
+
+  static async updateCharacter(id: string, characterData: Partial<Character>): Promise<Character | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/characters/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(characterData),
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      return result.success ? result.data : null;
+    } catch (error) {
+      console.error("更新角色失敗:", error);
+      return null;
+    }
+  }
+
+  static async deleteCharacter(id: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/characters/${id}`, {
+        method: "DELETE",
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await response.json();
+      return result.success;
+    } catch (error) {
+      console.error("刪除角色失敗:", error);
+      return false;
+    }
+  }
 }
 
 const ChatInterface = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      content: "Kyaa~! Hello there! I'm Luna-chan, your kawaii AI assistant! (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧ How can I help you today? ✨",
-      sender: "ai",
-      timestamp: new Date(),
-      character: "Luna"
-    }
-  ]);
-  
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
-  const [characters, setCharacters] = useState<Character[]>([
-    { 
-      id: "1", 
-      name: "Luna", 
-      personality: "Kawaii moon princess assistant", 
-      description: "A sweet and helpful AI with a magical moon theme",
-      avatar: "🌙", 
-      voice: "female-cute",
-      traits: ["Kawaii", "Helpful", "Magical", "Sweet"],
-      backstory: "Luna-chan is a magical moon princess who loves helping everyone with a smile!",
-      lastMessage: "Kyaa~! Hello there! I'm Luna-chan..."
-    },
-    { 
-      id: "2", 
-      name: "Sakura", 
-      personality: "Cherry blossom creative spirit", 
-      description: "An artistic AI inspired by spring and creativity",
-      avatar: "🌸", 
-      voice: "female-soft",
-      traits: ["Creative", "Artistic", "Gentle", "Inspiring"],
-      backstory: "Sakura-chan draws inspiration from the beauty of cherry blossoms and nature.",
-      lastMessage: "Let's create something beautiful together! ✨"
-    },
-    { 
-      id: "3", 
-      name: "Kitsune", 
-      personality: "Wise fox spirit companion", 
-      description: "A mystical AI with ancient wisdom and playful energy",
-      avatar: "🦊", 
-      voice: "neutral-mystical",
-      traits: ["Wise", "Mystical", "Playful", "Ancient"],
-      backstory: "Kitsune-san is an ancient fox spirit with centuries of wisdom and a love for mischief.",
-      lastMessage: "Ara ara~ What mysteries shall we explore? 🔮"
-    }
-  ]);
-  
-  const [activeCharacter, setActiveCharacter] = useState("1");
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [activeCharacter, setActiveCharacter] = useState<string>("");
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [isCreatingCharacter, setIsCreatingCharacter] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string>("");
   const [newCharacter, setNewCharacter] = useState<Partial<Character>>({
     name: "",
     personality: "",
@@ -99,6 +131,12 @@ const ChatInterface = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const callTimer = useRef<NodeJS.Timeout>();
 
+  // 初始化加載角色
+  useEffect(() => {
+    loadCharacters();
+  }, []);
+
+  // 滾動到底部
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -107,6 +145,7 @@ const ChatInterface = () => {
     scrollToBottom();
   }, [messages]);
 
+  // 通話計時器
   useEffect(() => {
     if (isCallActive) {
       callTimer.current = setInterval(() => {
@@ -126,6 +165,41 @@ const ChatInterface = () => {
     };
   }, [isCallActive]);
 
+  // 設置歡迎消息
+  useEffect(() => {
+    if (characters.length > 0 && activeCharacter && messages.length === 0) {
+      const character = characters.find(char => char.id === activeCharacter);
+      if (character) {
+        const welcomeMessage: Message = {
+          id: "welcome",
+          content: `Kyaa~! Hello there! I'm ${character.name}, your kawaii AI companion! (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧ How can I help you today? ✨`,
+          sender: "ai",
+          timestamp: new Date(),
+          character: character.name
+        };
+        setMessages([welcomeMessage]);
+      }
+    }
+  }, [activeCharacter, characters]);
+
+  // 加載角色
+  const loadCharacters = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const loadedCharacters = await CharacterAPI.fetchCharacters();
+      setCharacters(loadedCharacters);
+      if (loadedCharacters.length > 0 && !activeCharacter) {
+        setActiveCharacter(loadedCharacters[0].id);
+      }
+    } catch (err) {
+      setError("無法連接到服務器。請確保後端服務器正在運行在 http://localhost:8000");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 發送消息
   const handleSendMessage = () => {
     if (!inputValue.trim()) return;
 
@@ -139,7 +213,7 @@ const ChatInterface = () => {
     setMessages(prev => [...prev, userMessage]);
     setInputValue("");
 
-    // Simulate AI response with anime-style expressions
+    // 模擬AI回應
     setTimeout(() => {
       const character = characters.find(char => char.id === activeCharacter);
       const responses = [
@@ -168,13 +242,14 @@ const ChatInterface = () => {
     }
   };
 
+  // 開始通話
   const startCall = async () => {
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
       setIsCallActive(true);
     } catch (error) {
       console.error("Microphone access denied:", error);
-      alert("Microphone access is required for voice chat!");
+      setError("需要麥克風權限才能進行語音通話!");
     }
   };
 
@@ -189,22 +264,71 @@ const ChatInterface = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const createCharacter = () => {
-    if (!newCharacter.name?.trim()) return;
+  // 創建角色
+  const createCharacter = async () => {
+    if (!newCharacter.name?.trim()) {
+      setError("角色名稱不能為空");
+      return;
+    }
     
-    const character: Character = {
-      id: Date.now().toString(),
+    setIsLoading(true);
+    setError("");
+    
+    const characterData = {
       name: newCharacter.name,
       personality: newCharacter.personality || "Friendly AI companion",
       description: newCharacter.description || "A lovely AI character",
       avatar: newCharacter.avatar || "✨",
       voice: newCharacter.voice || "female-cute",
       traits: newCharacter.traits || [],
-      backstory: newCharacter.backstory || "A wonderful AI with lots to share!",
-      lastMessage: "Hello! Nice to meet you! ✨"
+      backstory: newCharacter.backstory || "A wonderful AI with lots to share!"
     };
     
-    setCharacters(prev => [...prev, character]);
+    try {
+      const createdCharacter = await CharacterAPI.createCharacter(characterData);
+      if (createdCharacter) {
+        setCharacters(prev => [...prev, createdCharacter]);
+        resetNewCharacterForm();
+        setIsCreatingCharacter(false);
+        setError("");
+      } else {
+        setError("創建角色失敗");
+      }
+    } catch (err) {
+      setError("創建角色時發生錯誤");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 刪除角色
+  const deleteCharacter = async (characterId: string) => {
+    if (characters.length <= 1) {
+      setError("至少需要保留一個角色");
+      return;
+    }
+
+    if (!confirm("確定要刪除這個角色嗎？")) return;
+
+    setIsLoading(true);
+    const success = await CharacterAPI.deleteCharacter(characterId);
+    
+    if (success) {
+      setCharacters(prev => prev.filter(char => char.id !== characterId));
+      if (activeCharacter === characterId) {
+        const remainingChars = characters.filter(char => char.id !== characterId);
+        if (remainingChars.length > 0) {
+          setActiveCharacter(remainingChars[0].id);
+        }
+      }
+    } else {
+      setError("刪除角色失敗");
+    }
+    setIsLoading(false);
+  };
+
+  // 重置新角色表單
+  const resetNewCharacterForm = () => {
     setNewCharacter({
       name: "",
       personality: "",
@@ -214,9 +338,10 @@ const ChatInterface = () => {
       traits: [],
       backstory: ""
     });
-    setIsCreatingCharacter(false);
+    setNewTrait("");
   };
 
+  // 添加特質
   const addTrait = () => {
     if (newTrait.trim() && newCharacter.traits) {
       setNewCharacter(prev => ({
@@ -227,6 +352,7 @@ const ChatInterface = () => {
     }
   };
 
+  // 移除特質
   const removeTrait = (index: number) => {
     setNewCharacter(prev => ({
       ...prev,
@@ -241,10 +367,26 @@ const ChatInterface = () => {
       {/* Characters Sidebar */}
       <div className="w-80 bg-card border-r border-border flex flex-col shadow-soft">
         <div className="p-6 border-b border-border bg-gradient-cute">
-          <h1 className="text-2xl font-bold text-primary mb-2">
-            ✨ Kawaii Chat ✨
-          </h1>
+          <div className="flex items-center justify-between mb-2">
+            <h1 className="text-2xl font-bold text-primary">
+              ✨ Kawaii Chat ✨
+            </h1>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={loadCharacters}
+              disabled={isLoading}
+              className="hover:bg-primary/10"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
           <p className="text-sm text-muted-foreground">Choose your AI companion!</p>
+          {error && (
+            <Alert className="mt-2">
+              <AlertDescription className="text-xs">{error}</AlertDescription>
+            </Alert>
+          )}
         </div>
         
         <div className="p-4 border-b border-border">
@@ -252,6 +394,7 @@ const ChatInterface = () => {
             <DialogTrigger asChild>
               <Button 
                 className="w-full bg-gradient-primary hover:scale-105 transition-all duration-300 shadow-cute font-medium"
+                disabled={isLoading}
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Create New Character ✨
@@ -374,6 +517,7 @@ const ChatInterface = () => {
                         <SelectItem value="female-energetic">Female - Energetic</SelectItem>
                         <SelectItem value="male-gentle">Male - Gentle</SelectItem>
                         <SelectItem value="neutral-mystical">Neutral - Mystical</SelectItem>
+                        <SelectItem value="neutral-calm">Neutral - Calm</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -381,12 +525,19 @@ const ChatInterface = () => {
               </Tabs>
               
               <div className="flex justify-end gap-2 pt-4">
-                <Button variant="outline" onClick={() => setIsCreatingCharacter(false)}>
+                <Button variant="outline" onClick={() => {
+                  setIsCreatingCharacter(false);
+                  resetNewCharacterForm();
+                }}>
                   Cancel
                 </Button>
-                <Button onClick={createCharacter} className="bg-gradient-primary">
+                <Button 
+                  onClick={createCharacter} 
+                  className="bg-gradient-primary"
+                  disabled={isLoading}
+                >
                   <Heart className="w-4 h-4 mr-2" />
-                  Create Character
+                  {isLoading ? "Creating..." : "Create Character"}
                 </Button>
               </div>
             </DialogContent>
@@ -408,10 +559,24 @@ const ChatInterface = () => {
                 <div className="flex items-center gap-3">
                   <div className="text-3xl">{character.avatar}</div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-lg flex items-center gap-1">
-                      {character.name}
-                      {activeCharacter === character.id && <Star className="w-4 h-4 text-primary fill-primary" />}
-                    </h3>
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-lg flex items-center gap-1">
+                        {character.name}
+                        {activeCharacter === character.id && <Star className="w-4 h-4 text-primary fill-primary" />}
+                      </h3>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteCharacter(character.id);
+                        }}
+                        className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10 w-6 h-6 p-0"
+                        disabled={characters.length <= 1}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                     <p className="text-sm text-muted-foreground truncate">{character.personality}</p>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {character.traits.slice(0, 2).map((trait, index) => (
@@ -425,6 +590,14 @@ const ChatInterface = () => {
               </CardContent>
             </Card>
           ))}
+          
+          {characters.length === 0 && !isLoading && (
+            <div className="text-center p-8 text-muted-foreground">
+              <div className="text-4xl mb-4">🌸</div>
+              <p>No characters found</p>
+              <p className="text-xs mt-2">Create your first character!</p>
+            </div>
+          )}
         </ScrollArea>
       </div>
 
@@ -435,12 +608,12 @@ const ChatInterface = () => {
           <div className="flex items-center gap-4">
             <Avatar className="w-12 h-12 ring-2 ring-primary/20">
               <AvatarFallback className="text-2xl bg-gradient-primary">
-                {currentCharacter?.avatar}
+                {currentCharacter?.avatar || "✨"}
               </AvatarFallback>
             </Avatar>
             <div>
               <h3 className="font-bold text-xl flex items-center gap-2">
-                {currentCharacter?.name}
+                {currentCharacter?.name || "Select a character"}
                 <Heart className="w-4 h-4 text-red-400 fill-red-400" />
               </h3>
               <p className="text-sm text-muted-foreground">{currentCharacter?.personality}</p>
@@ -522,10 +695,12 @@ const ChatInterface = () => {
               onKeyPress={handleKeyPress}
               placeholder="Type your message... ✨"
               className="flex-1 bg-muted border-0 focus:ring-2 focus:ring-primary/50 rounded-xl font-medium"
+              disabled={!currentCharacter}
             />
             <Button 
               onClick={handleSendMessage}
               className="bg-gradient-primary hover:scale-110 transition-all duration-200 shadow-cute rounded-xl"
+              disabled={!currentCharacter || !inputValue.trim()}
             >
               <Send className="w-4 h-4" />
             </Button>
