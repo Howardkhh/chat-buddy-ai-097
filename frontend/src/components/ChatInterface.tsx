@@ -155,7 +155,10 @@ const ChatInterface = () => {
 
   const [thresholdDb, setThresholdDb] = useState(loadVoiceSettings().thresholdDb);
 
-  
+  useEffect(() => {
+    loadCharacters();
+  }, []);
+
   // refresh when settings page saves
   useEffect(() => {
     const onUpd = () => setThresholdDb(loadVoiceSettings().thresholdDb);

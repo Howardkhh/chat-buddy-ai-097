@@ -1,0 +1,181 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from app.routes import bp as api_bp
+import requests
+import os, json, uuid
+
+from character import CharacterManager
+
+app = Flask(__name__, static_folder=None)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+app.register_blueprint(api_bp, url_prefix="/api")
+
+QWEN_API = "http://20.66.111.167:31022/v1/chat/completions"
+
+@app.route("/api/chat", methods=["POST"])
+def proxy_chat():
+    user_input = request.json.get("prompt", "")
+
+    payload = {
+        "model": "qwen3-30b-a3b-thinking-fp8",
+        "messages": [{"role": "user", "content": user_input}],
+        "max_tokens": 8192
+    }
+
+    # This is the Python equivalent of your curl
+    r = requests.post(
+        QWEN_API,
+        headers={"Content-Type": "application/json"},
+        json=payload,
+        timeout=60
+    )
+    data = r.json()
+    print(data)
+
+    # Extract the text like jq does
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    # cut the thinking part out
+    if "</think>" in content:
+        content = content.split("</think>")[-1].strip()
+
+    return jsonify({"content": content, "raw": data})
+
+
+
+# 初始化角色管理器
+character_manager = CharacterManager()
+
+# API路由
+@app.route('/api/characters', methods=['GET'])
+def get_characters():
+    """獲取所有角色"""
+    return jsonify({
+        "success": True,
+        "data": character_manager.get_all_characters(),
+        "message": "角色列表獲取成功"
+    })
+
+@app.route('/api/characters/<character_id>', methods=['GET'])
+def get_character(character_id):
+    """獲取單個角色"""
+    character = character_manager.get_character(character_id)
+    if character:
+        return jsonify({
+            "success": True,
+            "data": character.to_dict(),
+            "message": "角色獲取成功"
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "message": "角色不存在"
+        }), 404
+
+@app.route('/api/characters', methods=['POST'])
+def create_character():
+    """創建新角色"""
+    print("創建新角色請求接收")
+    try:
+        data = request.get_json()
+        print(data)
+        character = character_manager.create_character(data)
+        return jsonify({
+            "success": True,
+            "data": character.to_dict(),
+            "message": "角色創建成功"
+        }), 201
+    except Exception as e:
+        print(e)
+        return jsonify({
+            "success": False,
+            "message": f"創建角色失敗: {str(e)}"
+        }), 400
+
+@app.route('/api/characters/<character_id>', methods=['PUT'])
+def update_character(character_id):
+    """更新角色"""
+    print(f"更新角色ID: {character_id}")
+    try:
+        data = request.get_json()
+        character = character_manager.update_character(character_id, data)
+        if character:
+            return jsonify({
+                "success": True,
+                "data": character.to_dict(),
+                "message": "角色更新成功"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "角色不存在"
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"更新角色失敗: {str(e)}"
+        }), 400
+
+@app.route('/api/characters/<character_id>', methods=['DELETE'])
+def delete_character(character_id):
+    """刪除角色"""
+    if character_manager.delete_character(character_id):
+        return jsonify({
+            "success": True,
+            "message": "角色刪除成功"
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "message": "角色不存在"
+        }), 404
+
+@app.route('/api/characters/search', methods=['GET'])
+def search_characters():
+    """搜索角色"""
+    query = request.args.get('q', '').lower()
+    characters = character_manager.get_all_characters()
+    
+    if query:
+        filtered_characters = []
+        for char in characters:
+            if (query in char['name'].lower() or 
+                query in char['personality'].lower() or 
+                any(query in trait.lower() for trait in char['traits'])):
+                filtered_characters.append(char)
+        characters = filtered_characters
+    
+    return jsonify({
+        "success": True,
+        "data": characters,
+        "message": f"搜索完成，找到 {len(characters)} 個角色"
+    })
+
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    """獲取統計信息"""
+    characters = character_manager.get_all_characters()
+    voice_stats = {}
+    trait_stats = {}
+    
+    for char in characters:
+        # 統計聲音類型
+        voice = char['voice']
+        voice_stats[voice] = voice_stats.get(voice, 0) + 1
+        
+        # 統計特質
+        for trait in char['traits']:
+            trait_stats[trait] = trait_stats.get(trait, 0) + 1
+    
+    return jsonify({
+        "success": True,
+        "data": {
+            "total_characters": len(characters),
+            "voice_distribution": voice_stats,
+            "trait_distribution": trait_stats
+        },
+        "message": "統計信息獲取成功"
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000, debug=True)
