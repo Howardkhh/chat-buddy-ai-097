@@ -44,7 +44,7 @@ const CharacterCustomization = () => {
       backstory: "Alex draws inspiration from countless stories and creative works to help others express their ideas."
     }
   ]);
-
+  // test
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(characters[0]);
   const [isEditing, setIsEditing] = useState(false);
   const [newTrait, setNewTrait] = useState("");
