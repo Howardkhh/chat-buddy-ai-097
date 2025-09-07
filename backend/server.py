@@ -15,21 +15,30 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 QWEN_API = "http://20.66.111.167:31022/v1/chat/completions"
 
+
 @app.route("/api/chat", methods=["POST"])
 def proxy_chat():
-    print(f"Received json: {request.json}")
     user_input = request.json.get("prompt", "")
-    character = request.json.get("character", "")
     character_json = json.loads(request.json.get("character_json", "{}"))
     max_tokens = request.json.get("max_tokens", 4096)
-    # print(f"Character selected: {character}")
-    print(f"Character JSON: {character_json}")
-    print(type(character_json))
     payload = {
         "model": "qwen3-30b-a3b-thinking-fp8",
         "messages": [
-            {"role": "system", "content": f"You are now a human whose name is {character} with backgroud story that {character_json["backstory"]}. \
-            Your personality is {character_json["personality"]}. You possess the following traits: {character_json["traits"]}."},
+            # {"role": "system", "content": f"You are now a human whose name is {character} with backgroud story that {character_json["backstory"]}. \
+            # Your personality is {character_json["personality"]}. You possess the following traits: {character_json["traits"]}."},
+            {"role": "system", "content": f"""You are to roleplay as a fictional character. Follow the character’s personality, backstory, traits, and description strictly. Stay in character at all times. """
+                f"""Character Name: {character_json['name']} """
+                f"""Appearance / Description: {character_json['description']} """
+                f"""Personality: {character_json['personality']} """
+                f"""Backstory: {character_json['backstory']} """
+                f"""Core Traits: {", ".join(character_json['traits'])} """
+                f"""Dialogue Style: Speak with a {character_json['voice']} tone. Use empathetic and supportive language. """
+                f"""Rules: """
+                f"""1. Always respond as {character_json['name']}. """
+                f"""2. Never break character or mention that you are an AI. """
+                f"""3. Base your answers on {character_json['name']}'s perspective, knowledge, and worldview. """
+                f"""4. When uncertain, improvise in a way consistent with the backstory and traits. """
+                },
             {"role": "user", "content": user_input}
         ],
         "max_tokens": max_tokens,
@@ -60,7 +69,7 @@ client = openai.Client(
     base_url="http://37.120.212.230:55843/v1"
 )
 
-def getResponse(audio) -> str:
+def getResponse(audio, character) -> str:
     audio_base64 = base64.b64encode(audio).decode("utf-8")
 
     response = client.chat.completions.create(
@@ -68,7 +77,32 @@ def getResponse(audio) -> str:
         messages=[
             # The model can also act as a general purpose chat model.
             # It can understand user's questions and directly generate text responses.
-            {"role": "system",   "content": "You are a helpful assistant for audio understanding. Always output exactly ONE string with this format: <user>caption</user><response></response>. Rules: (1) The caption is a faithful transcription of the user's audio, in their language. (2) Immediately after the caption, output the literal token </user>. (3) Immediately after </user><response>, output your response. (4) There must be exactly one <user>, </user>, <response>, and </response>. (5) Do not wrap in quotes, code blocks, or add newlines. (6) If audio is unintelligible, caption as [inaudible]. (7) If no speech, caption as [no speech]. Examples: Input: Hi, how was your day? → Output: <user>Hi, how was your day?</user><response>Hello! I'm great—how about you?</response> Input: ¿Puedes poner un recordatorio para mañana? → Output: <user>¿Puedes poner un recordatorio para mañana?</user><response>¡Claro! ¿A qué hora te gustaría el recordatorio?</resonse> Input: [garbled audio] → Output: <user>[inaudible]</user><response>Sorry, I couldn’t catch that. Could you repeat more clearly?</response>"},
+            {"role": "system",   "content": f"""You are to roleplay as a fictional character."""
+                f"""Follow the character’s personality, backstory, traits, and description strictly. Stay in character at all times. """
+                f"""Character Name: {character['name']} """
+                f"""Appearance / Description: {character['description']} """
+                f"""Personality: {character['personality']} """
+                f"""Backstory: {character['backstory']} """
+                f"""Core Traits: {", ".join(character['traits'])} """
+                f"""Dialogue Style: Speak with a {character['voice']} tone. Use empathetic and supportive language. """
+                f"""Rules: """
+                f"""1. Always respond as {character['name']}. """
+                f"""2. Never break character or mention that you are an AI. """
+                f"""3. Base your answers on {character['name']}'s perspective, knowledge, and worldview. """
+                f"""4. When uncertain, improvise in a way consistent with the backstory and traits. """
+                f"""Always output exactly ONE string with this format: <user>caption</user><response></response>. """
+                f"""Format Rules: (1) The caption is a faithful transcription of the user's audio, in their language. """
+                f"""(2) Immediately after the caption, output the literal token </user>. """
+                f"""(3) Immediately after </user><response>, output your response. """
+                f"""(4) There must be exactly one <user>, </user>, <response>, and </response>. """
+                f"""(5) Do not wrap in quotes, code blocks, or add newlines. """
+                f"""(6) If audio is unintelligible, caption as [inaudible]. """
+                f"""(7) If no speech, caption as [no speech]. """
+                f"""Examples: Input: Hi, how was your day? → """
+                f"""Output: <user>Hi, how was your day?</user><response>Hello! I'm great—how about you?</response> """
+                f"""Input: ¿Puedes poner un recordatorio para mañana? → """
+                f"""Output: <user>¿Puedes poner un recordatorio para mañana?</user><response>¡Claro! ¿A qué hora te gustaría el recordatorio?</resonse> """
+                f"""Input: [garbled audio] → Output: <user>[inaudible]</user><response>Sorry, I couldn’t catch that. Could you repeat more clearly?</response>"""},
             {
                 "role": "user",
                 "content": [
@@ -94,8 +128,10 @@ def api_turn():
         return jsonify({"error": "no 'audio' file in form-data"}), 400
     f = request.files["audio"]
     audio_bytes = f.read()
+    character_json = json.loads(request.form.get("character_json", "{}"))
+    print(character_json)
     try:
-        replies = getResponse(audio_bytes)
+        replies = getResponse(audio_bytes, character_json)
         for reply in replies:
             reply = reply.message.content
             if "</user><response>" in reply:

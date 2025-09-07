@@ -150,6 +150,7 @@ const ChatInterface = () => {
 
   const [isVoicePanelOpen, setIsVoicePanelOpen] = useState(false)
   const [captionsByChar, setCaptionsByChar] = useState<Record<string, VCaption[]>>({})
+  const [isTurnBusy, setIsTurnBusy] = useState(false);
   const currentCaptions: VCaption[] = captionsByChar[activeCharacter] ?? []
   const headerRef = useRef<HTMLDivElement | null>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
@@ -402,14 +403,17 @@ const ChatInterface = () => {
 
   // 🔊 Hook: when call is active, capture turns
   const voice = useVoiceTurn({
-    enabled: isCallActive,
+    enabled: isCallActive && !isTurnBusy && !isMuted,
     muted: isMuted,
     onTurn: async (wav) => {
+      if (isTurnBusy) return;
+      setIsTurnBusy(true);
       // Add a temporary placeholder and keep its id
       const tempId = addCaption("user", "(voice) — sending audio…")
 
       const form = new FormData()
       form.append("audio", wav, "turn.wav")
+      form.append("character_json", JSON.stringify(characters.find((c) => c.id === activeCharacter)))
 
       try {
         const r = await fetch("http://localhost:8000/api/turn", { method: "POST", body: form })
@@ -417,10 +421,38 @@ const ChatInterface = () => {
         if (!r.ok) throw new Error(data.error || r.statusText)
 
         const userSaid = data.user || "(Failed to recognize speech)"
-        // Replace the placeholder text with the recognized user speech
         if (tempId) updateCaption(tempId, { text: userSaid })
 
-        const reply = data.bot
+        const reply = data.bot || "(no content)"
+
+        // 🔊 fetch TTS audio from your Flask backend
+        let aiAudioUrl: string | undefined
+        try {
+          const ttsRes = await fetch("http://localhost:8787/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              transcript: reply,
+              speaker_tag: JSON.stringify(characters.find((c) => c.id === activeCharacter)),
+              temperature: 0.35,
+              return_audio: "url",
+            }),
+          })
+          const ttsData = await ttsRes.json()
+          if (ttsRes.ok && ttsData.audio_url) {
+            aiAudioUrl = ttsData.audio_url
+            // 🎧 auto-play right away
+            const audio = new Audio(aiAudioUrl)
+            audio.addEventListener("ended", () => setIsTurnBusy(false))
+            audio.play().catch(() => setIsTurnBusy(false))
+          } else {
+            setIsTurnBusy(false)
+          }
+        } catch (e) {
+          console.warn("TTS fetch error:", e)
+          setIsTurnBusy(false)
+        }
+
         addCaption("ai", reply || "(no content)")
       } catch (err: any) {
         // Either change the temp line into an error...
@@ -429,6 +461,7 @@ const ChatInterface = () => {
         } else {
           addCaption("ai", `⚠️ Turn error: ${err?.message || err}`)
         }
+        setIsTurnBusy(false)
       }
     },
   });
@@ -723,60 +756,69 @@ const ChatInterface = () => {
           </Dialog>
         </div>
         
-        <ScrollArea className="flex-1 p-2">
-          {characters.map((character) => (
-            <Card
-              key={character.id}
-              className={`mb-3 cursor-pointer transition-all duration-300 hover:shadow-cute hover:scale-105 ${
-                activeCharacter === character.id 
-                  ? "ring-2 ring-primary shadow-glow bg-gradient-primary/10" 
-                  : "hover:bg-hover-accent"
-              }`}
-              onClick={() => setActiveCharacter(character.id)}
-            >
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="text-3xl">{character.avatar}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-semibold text-lg flex items-center gap-1">
-                        {character.name}
-                        {activeCharacter === character.id && <Star className="w-4 h-4 text-primary fill-primary" />}
-                      </h3>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteCharacter(character.id);
-                        }}
-                        className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10 w-6 h-6 p-0"
-                        disabled={characters.length <= 1}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    </div>
-                    <p className="text-sm text-muted-foreground truncate">{character.personality}</p>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {character.traits.slice(0, 2).map((trait, index) => (
-                        <Badge key={index} variant="outline" className="text-xs">
-                          {trait}
-                        </Badge>
-                      ))}
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-3">
+            {characters.map((character) => (
+              <Card
+                key={character.id}
+                className={`mb-0 cursor-pointer transition-all duration-300 hover:shadow-cute ${
+                  activeCharacter === character.id
+                    ? "ring-2 ring-primary shadow-glow bg-gradient-primary/10"
+                    : "hover:bg-hover-accent"
+                }`}
+                onClick={() => setActiveCharacter(character.id)}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="text-3xl shrink-0">{character.avatar}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-semibold text-lg flex items-center gap-1 truncate">
+                          {character.name}
+                          {activeCharacter === character.id && (
+                            <Star className="w-4 h-4 text-primary fill-primary" />
+                          )}
+                        </h3>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteCharacter(character.id);
+                          }}
+                          className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10 w-6 h-6 p-0 shrink-0"
+                          disabled={characters.length <= 1}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+
+                      {/* Multi-line, wrapped summary */}
+                      <p className="text-sm text-muted-foreground break-words line-clamp-2 mt-0.5">
+                        {character.personality}
+                      </p>
+
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {character.traits.slice(0, 2).map((trait, index) => (
+                          <Badge key={index} variant="outline" className="text-xs">
+                            {trait}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-          
-          {characters.length === 0 && !isLoading && (
-            <div className="text-center p-8 text-muted-foreground">
-              <div className="text-4xl mb-4">🌸</div>
-              <p>No characters found</p>
-              <p className="text-xs mt-2">Create your first character!</p>
-            </div>
-          )}
+                </CardContent>
+              </Card>
+            ))}
+
+            {characters.length === 0 && !isLoading && (
+              <div className="text-center p-8 text-muted-foreground">
+                <div className="text-4xl mb-4">🌸</div>
+                <p>No characters found</p>
+                <p className="text-xs mt-2">Create your first character!</p>
+              </div>
+            )}
+          </div>
         </ScrollArea>
       </div>
 
@@ -860,7 +902,7 @@ const ChatInterface = () => {
                 className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[70%] rounded-2xl px-4 py-3 shadow-soft transition-all duration-200 hover:scale-105 ${
+                  className={`max-w-[70%] rounded-2xl px-4 py-3 shadow-soft transition-all duration-200 ${
                     message.sender === "user"
                       ? "bg-chat-bubble-user text-primary-foreground"
                       : "bg-chat-bubble text-foreground border border-primary/10"
