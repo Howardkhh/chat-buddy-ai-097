@@ -63,6 +63,70 @@ def proxy_chat():
 
     return jsonify({"content": content, "raw": data})
 
+@app.route("/api/autofill", methods=["POST"])
+def autofill():
+    user_input = request.json.get("character_partial", "")
+    max_tokens = request.json.get("max_tokens", 4096)
+    payload = {
+        "model": "qwen3-30b-a3b-thinking-fp8",
+        "messages": [
+            {"role": "system", "content": f"""You are an assistant that completes a character profile for a chat app. """
+                f"""Return ONLY a JSON object (no prose) matching this exact TypeScript shape. """
+                f"""You may overwrite the `avatar` and `voice` fields if you think a better fit is needed. """
+                f"""The `voice` field must be one of "female-cute", "female-soft", "female-energetic", "male-gentle", "male-bold", "neutral-mystical", or "neutral-calm". """
+                """{"""
+                f"""\"name\": string, """
+                f"""\"personality\": string, """
+                f"""\"description\": string, """
+                f"""\"avatar\": string, """
+                f"""\"voice\": "female-cute" | "female-soft" | "female-energetic" | "male-gentle" | "male-bold" | "neutral-mystical" | "neutral-calm", """
+                f"""\"traits\": string[], """
+                f"""\"backstory\": string """
+                """}"""
+                f"""Rules: """
+                f"""- Keep it fun but concise. """
+                f"""- "avatar" should be a single emoji. """
+                f"""- "traits" is 3-6 short descriptors. """
+                f"""- Prefer keeping provided fields as-is, and fill the missing ones. """
+                f"""- Do not include markdown fences. """
+                f"""- No extra keys. """
+                f"""Example: """
+                f"""Input: {{\"name\": \"Donald Trump\", "avatar": "✨", "voice": "female-cute"}} ->"""
+                """Output: {"""
+                f"""\"name\": \"Donald Trump\","""
+                f"""\"personality\": "Confident, outspoken, and polarizing, with a strong sense of self-promotion and authority","""
+                f"""\"description\": "A former U.S. President, businessman, and media personality, Donald Trump is known for his bold communication style, larger-than-life persona, and influence on politics and culture. He is both admired and criticized worldwide, with a reputation for being unapologetically direct.","""
+                f"""\"avatar\": "🇺🇸","""
+                f"""\"voice\": "male-bold","""
+                f"""\"traits\": ["Confident", "Charismatic", "Controversial", "Blunt", "Ambitious", "Persuasive", "Strategic", "Resilient"],"""
+                f"""\"backstory\": "Donald Trump was born in New York City and built his career in real estate, branding himself as a successful businessman through high-profile projects and media appearances. He gained further recognition as the host of 'The Apprentice,' where his catchphrase 'You're fired!' became iconic. In 2016, he shocked the world by winning the U.S. presidential election, running on a populist platform with the slogan 'Make America Great Again.' During his presidency, he pursued unconventional policies, dominated media coverage, and maintained a highly devoted supporter base. Even after leaving office, Trump continues to wield significant influence in American politics and remains a central figure in global conversations.\""""
+                """}"""
+                },
+            {"role": "user", "content": user_input}
+        ],
+        "max_tokens": max_tokens,
+    }
+
+    # This is the Python equivalent of your curl
+    r = requests.post(
+        QWEN_API,
+        headers={"Content-Type": "application/json"},
+        json=payload,
+        timeout=60
+    )
+    data = r.json()
+    print(data)
+
+    # Extract the text like jq does
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    # cut the thinking part out
+    if "</think>" in content:
+        content = content.split("</think>")[-1].strip()
+
+    return jsonify({"content": content, "raw": data})
+
+
 BOSON_API_KEY = "fdjshifohudsoiaf"
 client = openai.Client(
     api_key=BOSON_API_KEY,
@@ -98,11 +162,11 @@ def getResponse(audio, character) -> str:
                 f"""(5) Do not wrap in quotes, code blocks, or add newlines. """
                 f"""(6) If audio is unintelligible, caption as [inaudible]. """
                 f"""(7) If no speech, caption as [no speech]. """
-                f"""Examples: Input: Hi, how was your day? → """
+                f"""Examples: User Input: Hi, how was your day? → """
                 f"""Output: <user>Hi, how was your day?</user><response>Hello! I'm great—how about you?</response> """
-                f"""Input: ¿Puedes poner un recordatorio para mañana? → """
+                f"""User Input: ¿Puedes poner un recordatorio para mañana? → """
                 f"""Output: <user>¿Puedes poner un recordatorio para mañana?</user><response>¡Claro! ¿A qué hora te gustaría el recordatorio?</resonse> """
-                f"""Input: [garbled audio] → Output: <user>[inaudible]</user><response>Sorry, I couldn’t catch that. Could you repeat more clearly?</response>"""},
+                f"""User Input: [garbled audio] → Output: <user>[inaudible]</user><response>Sorry, I couldn’t catch that. Could you repeat more clearly?</response>"""},
             {
                 "role": "user",
                 "content": [

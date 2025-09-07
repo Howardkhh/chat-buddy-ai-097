@@ -111,6 +111,46 @@ class CharacterAPI {
       return false;
     }
   }
+
+  static async autocompleteCharacter(seed: Partial<Character>): Promise<Partial<Character> | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/autofill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          character_partial: JSON.stringify(seed ?? {}),
+          max_tokens: 4096,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const data = await res.json();
+
+      // Many LLM backends put the text in different fields; support a few.
+      const raw =
+        data?.reply ??
+        data?.message ??
+        data?.data ??
+        data?.choices?.[0]?.message?.content ??
+        data?.content ??
+        "";
+
+      // Try to extract pure JSON (strip fences if any)
+      const jsonText = (() => {
+        const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        return fence ? fence[1] : raw;
+      })();
+
+      const parsed = JSON.parse(jsonText);
+
+      // Lightweight shape check
+      if (typeof parsed !== "object" || !parsed) throw new Error("Bad JSON from model");
+      return parsed as Partial<Character>;
+    } catch (err) {
+      console.error("autocompleteCharacter failed:", err);
+      return null;
+    }
+  }
 }
 
 const ChatInterface = () => {
@@ -156,6 +196,8 @@ const ChatInterface = () => {
   const [headerHeight, setHeaderHeight] = useState(0);
 
   const [thresholdDb, setThresholdDb] = useState(loadVoiceSettings().thresholdDb);
+
+  const [isAutofilling, setIsAutofilling] = useState(false);
 
   useEffect(() => {
     loadCharacters();
@@ -572,6 +614,47 @@ const ChatInterface = () => {
     }));
   };
 
+  const handleAutofill = async () => {
+    setError("");
+    setIsAutofilling(true);
+    try {
+      const seed: Partial<Character> = {
+        name: newCharacter.name,
+        personality: newCharacter.personality,
+        description: newCharacter.description,
+        avatar: newCharacter.avatar,
+        voice: newCharacter.voice,
+        traits: newCharacter.traits,
+        backstory: newCharacter.backstory,
+      };
+
+      const result = await CharacterAPI.autocompleteCharacter(seed);
+      if (!result) {
+        setError("自動補全失敗：無法從模型取得有效結果");
+        return;
+      }
+
+      // Merge: keep existing user-entered fields; fill missing/empty ones
+      setNewCharacter((prev) => {
+        const merged: Partial<Character> = {
+          ...prev,
+          name: prev.name?.trim() ? prev.name : result.name ?? prev.name,
+          personality: prev.personality?.trim() ? prev.personality : result.personality ?? prev.personality,
+          description: prev.description?.trim() ? prev.description : result.description ?? prev.description,
+          avatar: result.avatar?.trim() ? result.avatar : prev.avatar ?? prev.avatar,
+          voice: result.voice?.trim() ? (result.voice as Character["voice"]) : prev.voice ?? prev.voice,
+          traits: (prev.traits && prev.traits.length > 0) ? prev.traits : (Array.isArray(result.traits) ? result.traits : prev.traits),
+          backstory: prev.backstory?.trim() ? prev.backstory : result.backstory ?? prev.backstory,
+        };
+        return merged;
+      });
+    } catch (e: any) {
+      setError(`自動補全錯誤：${e?.message || e}`);
+    } finally {
+      setIsAutofilling(false);
+    }
+  };
+
   const currentCharacter = characters.find(char => char.id === activeCharacter);
 
   return (
@@ -728,6 +811,7 @@ const ChatInterface = () => {
                         <SelectItem value="female-soft">Female - Soft</SelectItem>
                         <SelectItem value="female-energetic">Female - Energetic</SelectItem>
                         <SelectItem value="male-gentle">Male - Gentle</SelectItem>
+                        <SelectItem value="male-bold">Male - Bold</SelectItem>
                         <SelectItem value="neutral-mystical">Neutral - Mystical</SelectItem>
                         <SelectItem value="neutral-calm">Neutral - Calm</SelectItem>
                       </SelectContent>
@@ -737,14 +821,30 @@ const ChatInterface = () => {
               </Tabs>
               
               <div className="flex justify-end gap-2 pt-4">
-                <Button variant="outline" onClick={() => {
-                  setIsCreatingCharacter(false);
-                  resetNewCharacterForm();
-                }}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleAutofill}
+                  disabled={isAutofilling || isLoading}
+                  className="gap-2"
+                  title="Auto-complete character fields with AI"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  {isAutofilling ? "Auto-completing..." : "Auto-complete"}
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsCreatingCharacter(false);
+                    resetNewCharacterForm();
+                  }}
+                >
                   Cancel
                 </Button>
-                <Button 
-                  onClick={createCharacter} 
+
+                <Button
+                  onClick={createCharacter}
                   className="bg-gradient-primary"
                   disabled={isLoading}
                 >

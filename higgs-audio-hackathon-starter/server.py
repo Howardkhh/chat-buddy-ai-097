@@ -64,7 +64,7 @@ def generateAudio(transcript, speaker_tag, ref_audio, temperature, model_client,
     ref_audio_in_system_message = None
     ref_audio = None
     speaker_json = json.loads(speaker_tag) if speaker_tag is not None else None
-    if speaker_tag is not None and os.path.exists(f"{CURR_DIR}/ref_audio/{speaker_json['name'].replace(" ", "")}.mp3"):
+    if speaker_tag is not None and os.path.exists(f"{CURR_DIR}/ref_audio/{speaker_json['name'].replace(" ", "")}.wav"):
         print("Found reference audio for the given speaker tag.")
         ref_audio = speaker_json['name'].replace(" ", "")
         ref_audio = f"{CURR_DIR}/ref_audio/{ref_audio}"

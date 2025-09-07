@@ -1,5 +1,6 @@
 import os, uuid, json
 from datetime import datetime
+from voice_fetcher import fetch
 
 DATA_FILE = "./characters.json"
 
@@ -120,6 +121,10 @@ class CharacterManager:
         character = Character(**character_data)
         self.characters[character.id] = character
         self.save_data()
+        try:
+            fetch(character.name, out_dir="../higgs-audio-hackathon-starter/ref_audio")
+        except Exception as e:
+            print(f"Error fetching voice sample: {e}")
         return character
     
     def update_character(self, id, character_data):
