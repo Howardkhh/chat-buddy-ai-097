@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# Environments
+.env
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Editors/IDE
+.idea/
+.vscode/
+
+# Outputs
+*.wav
+outputs/
+
+# Keys (do not commit private keys)
+*.pem
+*id_ed25519*
+
+# Internal ops (keep private)
+hackathon-ops/keys/
+manifests/*.csv
+
